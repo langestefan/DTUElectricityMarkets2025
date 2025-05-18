@@ -1,4 +1,4 @@
-ID,Location,InstalledCapacity_MW,Forecast_MW
+id,bus,capacity_MW,forecast_MW
 1,3,500,120.54
 2,5,500,115.52
 3,16,300,53.34

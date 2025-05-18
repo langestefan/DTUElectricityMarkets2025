@@ -1,4 +1,4 @@
-ID,Location,Consumption_MW,CurtailmentCost_$/MWh
+id,bus,consumption_MW,CurtailmentCost_$/MWh
 1,1,84,500
 2,2,75,500
 3,3,139,500

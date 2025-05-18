@@ -1,4 +1,4 @@
-ID,Location,ProductionCost_$/MWh,UpReserveCost_$/MW,DownReserveCost_$/MW,Capacity_MW,MaxUpReserve_MW,MaxDownReserve_MW
+id,bus,production_cost_D_MWh,upreservecost_D_MW,downreservecost_D_MW,capacity_MW,maxupreserve_MW,maxdownreserve_MW
 1,1,13.32,1.68,2.32,106.4,48,48
 2,2,13.32,1.68,2.32,106.4,48,48
 3,7,20.7,3.3,4.67,245.0,84,84

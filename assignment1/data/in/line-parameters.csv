@@ -1,4 +1,4 @@
-FromNode,ToNode,Susceptance_pu,Capacity_MW
+from_bus,to_bus,susceptance_pu,capacity_MW
 1,2,0.0146,175
 1,3,0.2253,175
 1,5,0.0907,350
