@@ -1,12 +1,27 @@
 
+function plot_value(
+    model::Model,
+    variable::Symbol;
+    color = :blue,
+    ylabel = "Value",
+    offset = 0,
+)
+    # extract the variable values from the model
+    x = Vector(value.(model[variable]))
 
-function plot_demand(x::Vector{Float64}; color = :blue)
+    return plot_value(x; color = color, ylabel = ylabel, offset = offset)
+end
+
+function plot_value(x::Vector{<:Real}; color = :blue, ylabel = "Value", offset = 0)
+
+    idx = offset:length(x)+offset-1
+
     fig = Figure(size = (800, 300))
     ax = Axis(
         fig[1, 1],
         xlabel = "Hour [-]",
-        ylabel = "Demand [MW]",
-        xticks = (1:length(x), string.(0:length(x)-1)),
+        ylabel = ylabel,
+        xticks = (0:length(x)-1, string.(idx)),
         xticksize = 5.5,
         xlabelsize = 18,
         ylabelsize = 18,
@@ -76,23 +91,36 @@ function plot_merit_order(
     generation_bids::Vector{Tuple{Float64,Float64}},
 )
 
-    # Sort demand by descending price (price takers willing to pay more are first)
+    # sort demand by descending price (price takers willing to pay more are first)
     sorted_demand = sort(demand_bids; by = x -> -x[2])
     qd = cumsum(first.(sorted_demand))  # Cumulative demand quantities
     pd = last.(sorted_demand)           # Corresponding prices
 
-    # Sort generation by ascending price (cheapest generators first)
+    # sort generation by ascending price (cheapest generators first)
     sorted_generation = sort(generation_bids; by = x -> x[2])
     qg = cumsum(first.(sorted_generation))  # Cumulative gen quantities
-    pg = last.(sorted_generation)           # Corresponding prices
 
-    # Create figure and axis
+    # ensure the first point for generation starts at 0 MW
+    qg = [0.0; qg]
+    pg = last.(sorted_generation)
+    pg = [0.0; pg]
+
+    # ensure last point for demand is at the maximum cumulative quantity and drops down
+    qd = [qd; qd[end]]
+    pd = [pd; 0.0]  # Demand price drops to 0 at the end
+
+    # create figure and axis
     fig = Figure(size = (800, 500))
     ax = Axis(
         fig[1, 1],
         xlabel = "Cumulative Quantity [MW]",
         ylabel = "Price [€/MWh]",
         title = "Merit Order Curve",
+        yticks = (0:5:100, string.(0:5:100)),
+        xticks = (
+            0:500:maximum(cumsum(first.(generation_bids))),
+            string.(0:500:maximum(cumsum(first.(generation_bids)))),
+        ),
     )
 
     # Plot stepwise lines
