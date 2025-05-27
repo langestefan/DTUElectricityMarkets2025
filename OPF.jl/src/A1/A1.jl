@@ -9,5 +9,7 @@ include("model.jl")
 
 export market_clearing
 
+using OPF.Utils: S_base
+
 
 end

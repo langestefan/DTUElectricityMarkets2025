@@ -1,9 +1,67 @@
+
+function add_network(
+    model::Model;
+    b = 1 / 0.002,  # base susceptance in p.u.
+    network::DataFrame = DataFrame(),
+)
+    # sets 
+    B = model[:sets][:B]  # all buses
+    T = model[:sets][:T]  # time periods
+    L = model[:sets][:L]  # all lines
+    D = model[:sets][:D]  # all demand buses
+    G = model[:sets][:G]  # all generation buses
+
+    # variables
+    P_D = model[:P_D]  # demand power
+    P_G = model[:P_G]  # generation power
+
+    # construct line limits Dict
+    P_line_max = Dict(
+        (network.from_bus[i], network.to_bus[i]) => network.capacity_pu[i] for
+        i = 1:nrow(network)
+    )
+    model[:P_line_max] = P_line_max
+
+    @variable(model, θ[B, T])
+
+    # fix voltage angles at the REF bus to 0
+    ref_bus = model[:sets][:ref_bus]
+    fix.(θ[ref_bus, :], 0.0; force = true)
+
+    # line power flow
+    @expression(model, P_line[l in L, t in T], b * (θ[l[1], t] - θ[l[2], t]))
+    @constraint(
+        model,
+        P_line_limits[l in L, t in T],
+        -P_line_max[l] <= P_line[l, t] <= P_line_max[l]
+    )
+
+    # power balance at each bus
+    @constraint(
+        model,
+        P_balance[b in B, t in T],
+
+        # total demand located at bus b
+        sum(P_D[d, t] for d in D if d[1] == b) +
+
+        # total power leaving bus b
+        sum(P_line[(b, j), t] for j in B if (b, j) in L) -
+
+        # total generation located at bus b
+        sum(P_G[g, t] for g in G if g[1] == b) -
+
+        # total power into bus b
+        sum(P_line[(j, b), t] for j in B if (j, b) in L) == 0
+    )
+end
+
+
 function add_storage(
     model::Model;
-    P_ch_max::Float64 = 200.0,   # maximum charging power in MW
-    P_dis_max::Float64 = 200.0,  # maximum discharging power in MW
-    E_cap::Float64 = 1000.0,      # energy capacity in MWh
-    E0::Float64 = 100.0,           # initial energy in MWh
+    P_ch_max::Float64 = 200.0 / S_base,   # maximum charging power in MW
+    P_dis_max::Float64 = 200.0 / S_base,  # maximum discharging power in MW
+    E_cap::Float64 = 1000.0 / S_base,      # energy capacity in MWh
+    E0::Float64 = 100.0 / S_base,           # initial energy in MWh
     η_ch::Float64 = 0.80,        # charging efficiency
     η_dis::Float64 = 0.92,       # discharging efficiency
 )
@@ -19,8 +77,8 @@ function add_storage(
 
     # charging and discharging power at each time step
     @variables(model, begin
-        P_ch[T], (base_name = "Charging power")
-        P_dis[T], (base_name = "Discharging power")
+        P_ch[T]     # Charging power
+        P_dis[T]    # Discharging power
     end)
 
     @constraints(
@@ -33,7 +91,7 @@ function add_storage(
             P_dis_up[t in T], 0 <= P_dis[t] <= P_dis_max
 
             # energy balance equation
-            E_balance[t in T], E[t] == E[t-1] + η_ch * P_ch[t] - P_dis[t] / η_dis
+            Storage_E_balance[t in T], E[t] == E[t-1] + η_ch * P_ch[t] - P_dis[t] / η_dis
         end
     )
 
@@ -47,8 +105,14 @@ function market_clearing(
     demands::DataFrame = DataFrame(),
     network::DataFrame = DataFrame(),
     demand_prices::DataFrame = DataFrame(),
-    storage::Bool = false,
+    use_storage::Bool = false,
+    use_network::Bool = false,
 )
+    # use_storage and use_network can't be both true at the same time
+    if use_storage && use_network
+        error("simultaneously using use_storage and use_network is not supported")
+    end
+
     # create model
     model = Model(HiGHS.Optimizer)
     set_silent(model)
@@ -63,19 +127,28 @@ function market_clearing(
     L = Set(zip(network.from_bus, network.to_bus))      # all lines
 
     # add sets to model
-    model[:sets] = Dict(:T => T, :B => B, :GF => GF, :GW => GW, :G => G, :D => D, :L => L)
+    model[:sets] = Dict(
+        :T => T,
+        :B => B,
+        :GF => GF,
+        :GW => GW,
+        :G => G,
+        :D => D,
+        :L => L,
+        :ref_bus => 1,
+    )
 
     # construct cost parameter for generation
-    π_G = Dict(generation_fixed.bus .=> generation_fixed.production_cost_D_MWh)
+    π_G = Dict(generation_fixed.bus .=> generation_fixed.production_cost_D_pu)
     π_G = merge(π_G, Dict(parse.(Int, names(generation_wind)) .=> 0.0))
 
     # construct cost parameter for demand
-    π_D = Dict(demand_prices.bus .=> demand_prices.price)
+    π_D = Dict(demand_prices.bus .=> demand_prices.price_pu)
 
     @variables(model, begin
-        P_GW[GW, T], (base_name = "Wind generation")
-        P_GF[GF, T], (base_name = "Fixed generation")
-        P_D[D, T], (base_name = "Demand")
+        P_GW[GW, T]     # Wind generation
+        P_GF[GF, T]     # Fixed generation
+        P_D[D, T]       # Demand
     end)
 
     @expression(
@@ -94,7 +167,7 @@ function market_clearing(
             D_cost[d in D, t in T], π_D[d] * P_D[d, t]
 
             # fixed generation upper limit
-            GF_max[g in GF], sum(generation_fixed[generation_fixed.bus.==g, :capacity_MW])
+            GF_max[g in GF], sum(generation_fixed[generation_fixed.bus.==g, :capacity_pu])
 
             # wind generation upper limit
             GW_max[g in GW, t in T], generation_wind[t, Symbol(g)]
@@ -119,14 +192,19 @@ function market_clearing(
     # if storage is enabled, add storage constraints
     P_ch = zeros(T)
     P_dis = zeros(T)
-    if storage
+    if use_storage
         P_ch, P_dis = add_storage(model)
+    end
+
+    # if network is enabled, add network constraints
+    if use_network
+        add_network(model; network = network)
     end
 
     # energy balance constraint
     @constraint(
         model,
-        P_balance[t in T],
+        E_balance[t in T],
         sum(P_G[g, t] for g in G) - sum(P_D[d, t] for d in D) - P_ch[t] + P_dis[t] == 0
     )
 
@@ -145,7 +223,7 @@ function market_clearing(
 
     @expressions(model, begin
         # clearing price at each time step
-        CP[t in T], dual(P_balance[t])
+        CP[t in T], dual(E_balance[t])
 
         # utility of each demand, defined as:
         # Utility = Power Consumption × (Bid Price − Market-Clearing Price)
@@ -188,7 +266,7 @@ function market_clearing(
     )
 
     # storage total profit 
-    if storage
+    if use_storage
         @expression(model, S_profit, sum(P_dis[t] * CP[t] - P_ch[t] * CP[t] for t in T))
         @info "Total profit from storage: $(value(S_profit))"
     end
